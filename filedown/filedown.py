@@ -2,10 +2,19 @@
 from __future__ import division
 
 import sys
+import time
 import math
 import click
+import random
 import requests
+from urllib3 import Retry
+from requests.adapters import HTTPAdapter
+
+from gevent import monkey
+monkey.patch_all()
+
 import threading
+
 from tqdm import tqdm
 from Queue import Queue
 
@@ -15,13 +24,16 @@ except ImportError:
     from urllib.parse import urlparse
 
 s = requests.session()
+retries = Retry(total=3, backoff_factor=0.1)
+s.mount('http://', HTTPAdapter(max_retries=retries))
+s.mount('https://', HTTPAdapter(max_retries=retries))
 
 
 class FileDownException(Exception):
     pass
 
 
-def ceildiv(a, b):
+def ceil_div(a, b):
     return int(math.ceil(a / b))
 
 
@@ -34,7 +46,7 @@ class RequestHandler(object):
         self.headers = headers or {}
         self.cookies = cookies or {}
         self.proxies = proxies or {}
-        self.session = requests.session()
+        self.session = s
 
     def do_request(self, method, url=None, headers=None, cookies=None,
                    proxies=None, **kwargs):
@@ -76,7 +88,7 @@ class DownloadProcess(object):
         self.request_handler = RequestHandler(self.url, headers=headers,
                                               cookies=cookies, proxies=proxies)
         self.content_length = self.request_handler.get_content_length()
-        self.interval = ceildiv(self.content_length, self.thread_num)
+        self.interval = ceil_div(self.content_length, self.thread_num)
         self.progress = tqdm(total=self.content_length, unit='B',
                              unit_scale=True, desc=self.filename)
 
@@ -132,18 +144,33 @@ class DownloadHandler(threading.Thread):
         self.chunk_size = 1024 * 10
         self.downloaded = 0
 
-    def run(self):
-        sys.stdout.write('Thread-%s start range %d-%d\n' % (
-            self.name, self.range_start, self.range_end))
+    def process(self):
+        try:
+            resp = self.request_handler.get_range_content(
+                range_start=self.range_start, range_end=self.range_end)
+        except requests.ConnectionError as e:
+            sys.stdout.write('Thread-%s %r\n' % (self.name, e))
+            time.sleep(random.random())
+            resp = self.request_handler.get_range_content(
+                range_start=self.range_start, range_end=self.range_end)
 
-        resp = self.request_handler.get_range_content(
-            range_start=self.range_start, range_end=self.range_end)
         with open(self.filename, 'rb+') as f:
             f.seek(self.range_start)
             for data in resp.iter_content(chunk_size=self.chunk_size):
                 f.write(data)
                 self.queue.put(len(data))
                 self.downloaded += len(data)
+
+    def run(self):
+        sys.stdout.write('Thread-%s start range %d-%d\n' % (
+            self.name, self.range_start, self.range_end))
+
+        try:
+            self.process()
+        except requests.ConnectionError as e:
+            sys.stdout.write('Thread-%s %r\n' % (self.name, e))
+            time.sleep(random.random())
+            self.process()
 
         sys.stdout.write("Thread-%s end range %d-%d\n" % (
             self.name, self.range_start, self.range_end))
@@ -175,4 +202,9 @@ def main(url, thread_num, filename, cookie, header, proxy):
 
 
 if __name__ == '__main__':
+    """
+    两个问题
+    1. 异常捕获和处理，ConnectionError
+    2. 线程池用完后期下载速度乏力
+    """
     main()
