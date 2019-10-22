@@ -85,7 +85,7 @@ def download(url, chunk_size=1024 * 1024):
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ['-h', '--help']:
-        print """Usage: only_download URL
+        print """Usage: only_download URL [thread_num]
     example: only_download https://baidu.com/index.html
         """
         exit()
