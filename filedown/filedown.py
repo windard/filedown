@@ -18,7 +18,7 @@ import threading
 from tqdm import tqdm
 
 try:
-    import urlparse
+    from urlparse import urlparse
     from Queue import Queue
 except ImportError:
     from queue import Queue
@@ -95,7 +95,7 @@ class DownloadProcess(object):
                              unit_scale=True, desc=self.filename)
 
     def parse_filename(self):
-        return urlparse.urlparse(self.url).path.rsplit('/')[-1]
+        return urlparse(self.url).path.rsplit('/')[-1]
 
     def process(self):
         sys.stdout.write("\033[2K\033[E")
