@@ -3,13 +3,17 @@
 import sys
 import time
 import random
-import Queue
 import urlparse
 import requests
 import threading
 from multiprocessing.pool import ThreadPool
 from tqdm import tqdm
 import logging
+
+try:
+    import Queue
+except Exception as e:
+    import queue as Queue
 
 
 session = requests.Session()

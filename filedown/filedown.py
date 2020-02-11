@@ -16,12 +16,14 @@ monkey.patch_all()
 import threading
 
 from tqdm import tqdm
-from Queue import Queue
 
 try:
     import urlparse
+    from Queue import Queue
 except ImportError:
+    from queue import Queue
     from urllib.parse import urlparse
+
 
 s = requests.session()
 retries = Retry(total=3, backoff_factor=0.1)
