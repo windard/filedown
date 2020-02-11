@@ -2,7 +2,7 @@
 
 from setuptools import setup
 
-version = '0.2.2'
+version = '0.2.3'
 
 entry_points = {
     'console_scripts': [
@@ -23,6 +23,7 @@ setup(
         'Click',
         'tqdm',
         'requests',
+        'gevent',
     ],
     license="MIT",
     entry_points=entry_points,
