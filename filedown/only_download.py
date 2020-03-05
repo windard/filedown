@@ -1,5 +1,6 @@
 # coding=utf-8
 
+import os
 import sys
 import time
 import random
@@ -70,12 +71,16 @@ def download(url, chunk_size=1024 * 1024):
     content_length = int(resp.headers.get('Content-Length') or 0)
     if not content_length:
         return
+
+    if os.path.exists(filename) and os.path.getsize(filename) == content_length:
+        print("{} is exist".format(filename))
+    else:
+        f = open(filename, 'wb')
+        f.truncate(content_length)
+        f.close()
+
     progress = tqdm(total=content_length, unit='B',
                     unit_scale=True, desc=filename)
-
-    f = open(filename, 'wb')
-    f.truncate(content_length)
-    f.close()
 
     t = threading.Thread(target=update_progress, args=(progress, queue))
     t.setDaemon(True)
