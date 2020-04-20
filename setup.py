@@ -2,7 +2,7 @@
 
 from setuptools import setup
 
-version = '0.3.0'
+version = '0.3.2'
 
 entry_points = {
     'console_scripts': [

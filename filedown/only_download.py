@@ -60,7 +60,7 @@ def update_progress(progress, queue):
         logger.error("update progress error %r", e)
 
 
-def download(url, chunk_size=1024 * 1024):
+def download(url, thread_num=40, chunk_size=1024 * 1024):
     if not isinstance(url, unicode):
         url = url.decode("utf-8")
 
@@ -86,7 +86,7 @@ def download(url, chunk_size=1024 * 1024):
     t.setDaemon(True)
     t.start()
 
-    pool = ThreadPool(40)
+    pool = ThreadPool(thread_num)
 
     for i in range(0, content_length, chunk_size):
         pool.apply_async(worker, (url, filename, i, i + chunk_size, queue))
@@ -102,9 +102,12 @@ def main():
     example: only_download https://baidu.com/index.html
         """)
         exit()
-    if len(sys.argv) > 2:
+    if len(sys.argv) == 3:
         download(sys.argv[1], int(sys.argv[2]))
-    download(sys.argv[1])
+    elif len(sys.argv) == 4:
+        download(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
+    else:
+        download(sys.argv[1])
 
 
 if __name__ == '__main__':
