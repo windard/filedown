@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 
+import os
 import sys
 import time
 import math
@@ -41,7 +42,7 @@ def ceil_div(a, b):
 
 class RequestHandler(object):
 
-    def __init__(self, url=None, timeout=10, headers=None, cookies=None,
+    def __init__(self, url=None, timeout=30, headers=None, cookies=None,
                  proxies=None):
         self.url = url
         self.timeout = timeout
@@ -103,9 +104,12 @@ class DownloadProcess(object):
         sys.stdout.write(
             'length %d, filename %s \n' % (self.content_length, self.filename))
 
-        f = open(self.filename, 'wb')
-        f.truncate(self.content_length)
-        f.close()
+        if os.path.exists(self.filename) and os.path.getsize(self.filename) == self.content_length:
+            print(u"{} is exist".format(self.filename))
+        else:
+            f = open(self.filename, 'wb')
+            f.truncate(self.content_length)
+            f.close()
 
         t = threading.Thread(target=self.update_progress)
         t.setDaemon(True)
@@ -147,21 +151,24 @@ class DownloadHandler(threading.Thread):
         self.downloaded = 0
 
     def process(self):
-        try:
-            resp = self.request_handler.get_range_content(
-                range_start=self.range_start, range_end=self.range_end)
-        except requests.ConnectionError as e:
-            sys.stdout.write('Thread-%s %r\n' % (self.name, e))
-            time.sleep(random.random())
-            resp = self.request_handler.get_range_content(
-                range_start=self.range_start, range_end=self.range_end)
-
-        with open(self.filename, 'rb+') as f:
-            f.seek(self.range_start)
-            for data in resp.iter_content(chunk_size=self.chunk_size):
-                f.write(data)
-                self.queue.put(len(data))
-                self.downloaded += len(data)
+        n = 3
+        process_count = 0
+        while n:
+            try:
+                with open(self.filename, 'rb+') as f:
+                    resp = self.request_handler.get_range_content(
+                        range_start=self.range_start, range_end=self.range_end)
+                    f.seek(self.range_start)
+                    for data in resp.iter_content(chunk_size=self.chunk_size):
+                        f.write(data)
+                        process_count += len(data)
+                break
+            except requests.ConnectionError as e:
+                sys.stdout.write('[%d]Thread-%s %r\n' % (4-n, self.name, e))
+                time.sleep(random.random())
+                n -= 1
+        self.queue.put(process_count)
+        self.downloaded += process_count
 
     def run(self):
         sys.stdout.write('Thread-%s start range %d-%d\n' % (
