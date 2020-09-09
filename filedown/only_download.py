@@ -73,7 +73,7 @@ def download(url, thread_num=40, chunk_size=1024 * 1024):
         return
 
     if os.path.exists(filename) and os.path.getsize(filename) == content_length:
-        print("{} is exist".format(filename))
+        print(u"{} is exist".format(filename))
     else:
         f = open(filename, 'wb')
         f.truncate(content_length)
