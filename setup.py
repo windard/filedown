@@ -1,5 +1,6 @@
 # coding=utf-8
 
+import setuptools
 from setuptools import setup
 
 version = '0.6.0'
