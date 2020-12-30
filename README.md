@@ -16,30 +16,37 @@ python setup.py install
 
 ### Usage
 
+安装之后有两个下载命令，差异不大，择优使用。
+
 1. filedown
 
 ```
-$ filedown --help
+$ filedown -h
 Usage: filedown [OPTIONS] URL
 
-  :param url: :param thread_num: :param filename: :param cookie: :param
-  header: :param proxy: pip install "requests[socks]" first :return:
+Options:
+  --thread / --process      Use ThreadPool or ProcessPool
+  -w, --worker_num INTEGER  Number of workers
+  -s, --chunk_size INTEGER  Chunk size of each piece
+  -c, --timeout INTEGER     Timeout for chunk download
+  -f, --filename TEXT       Filename of download
+  -h, --headers TEXT        Headers to get file
+  -c, --cookies TEXT        Cookie to get file
+  -p, --proxies TEXT        Proxy to get file, pip install "requests[socks]"
+  -h, --help                Show this message and exit.
+```
+
+2. concurrent_download
+
+```
+$ concurrent_download -h
+Usage: concurrent_download [OPTIONS] URL
 
 Options:
-  -t, --thread_num INTEGER  Number of threads
-  -f, --filename TEXT       Filename of download
-  -h, --header TEXT         Headers to attach file
-  -c, --cookie TEXT         Cookie to attach file
-  -p, --proxy TEXT          Proxy to attach file
-  --help                    Show this message and exit.
-```
-
-2. only_download
-
-```
-$ only_download --help
-Usage: only_download URL [thread_num]
-    example: only_download https://baidu.com/index.html
+  -h, --help             Show this message and exit.
+  -n, --num INTEGER      thread number
+  -c, --chunk INTEGER    chunk download size
+  -t, --timeout INTEGER  chunk download timeout
 
 ```
 
