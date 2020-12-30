@@ -1,58 +1,40 @@
 # -*- coding: utf-8 -*-
-from __future__ import division
 
 import os
-import sys
-import time
-import math
 import click
-import random
+import logging
 import requests
-from urllib3 import Retry
-from requests.adapters import HTTPAdapter
-
-from gevent import monkey
-monkey.patch_all()
-
-import threading
-
 from tqdm import tqdm
+from requests.adapters import HTTPAdapter
+from multiprocessing import Queue
+from multiprocessing import Manager
+from multiprocessing import Pool as ProcessPool
+from multiprocessing.pool import ThreadPool
 
-try:
-    from urlparse import urlparse
-    from Queue import Queue
-except ImportError:
-    from queue import Queue
-    from urllib.parse import urlparse
-
-
-s = requests.session()
-retries = Retry(total=3, backoff_factor=0.1)
-s.mount('http://', HTTPAdapter(max_retries=retries))
-s.mount('https://', HTTPAdapter(max_retries=retries))
+from six.moves.urllib.parse import urlparse
 
 
-class FileDownException(Exception):
-    pass
-
-
-def ceil_div(a, b):
-    return int(math.ceil(a / b))
+request_session = requests.session()
+request_session.mount('http://', HTTPAdapter(pool_maxsize=30))
+request_session.mount('https://', HTTPAdapter(pool_maxsize=30))
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(name)-25s %(asctime)s %(levelname)-8s %(lineno)-4d %(message)s',
+    datefmt='[%Y %b %d %a %H:%M:%S]',
+)
+logger = logging.getLogger(__name__)
 
 
 class RequestHandler(object):
-
-    def __init__(self, url=None, timeout=30, headers=None, cookies=None,
-                 proxies=None):
+    def __init__(self, url=None, timeout=30, headers=None, cookies=None, proxies=None, session=None):
         self.url = url
         self.timeout = timeout
         self.headers = headers or {}
         self.cookies = cookies or {}
         self.proxies = proxies or {}
-        self.session = s
+        self.session = session or request_session
 
-    def do_request(self, method, url=None, headers=None, cookies=None,
-                   proxies=None, **kwargs):
+    def do_request(self, method, url=None, headers=None, cookies=None, proxies=None, **kwargs):
         url = url or self.url
         if headers:
             self.headers.update(headers)
@@ -60,160 +42,138 @@ class RequestHandler(object):
             self.cookies.update(cookies)
         if proxies:
             self.proxies.update(proxies)
-        resp = self.session.request(method=method,
-                                    url=url,
-                                    headers=self.headers,
-                                    cookies=self.cookies,
-                                    proxies=self.proxies,
-                                    timeout=self.timeout,
-                                    allow_redirects=False,
-                                    **kwargs)
+        resp = self.session.request(
+            method=method,
+            url=url,
+            headers=self.headers,
+            cookies=self.cookies,
+            proxies=self.proxies,
+            timeout=self.timeout,
+            allow_redirects=False,
+            **kwargs
+        )
         return resp
+
+    def handle(self, filename=None, task_queue=None, progress_queue=None, chunk_size=1024 * 1024):
+        # type: (str, Queue, Queue, int) -> None
+        while True:
+            start = task_queue.get(timeout=2)
+
+            try:
+                range_header = {'Range': 'bytes={}-{}'.format(start, start + chunk_size)}
+                resp = self.do_request('GET', headers=range_header)
+                with open(filename, 'rb+') as f:
+                    f.seek(start)
+                    f.write(resp.content)
+                content_length = int(resp.headers.get('Content-Length', 0))
+            except requests.Timeout as e:
+                logger.error("download timeout:%r", e)
+                task_queue.put(start)
+            except Exception as e:
+                logger.error("download error:%r", e)
+                task_queue.put(start)
+            else:
+                progress_queue.put(content_length)
 
     def get_content_length(self, url=None):
         resp = self.do_request('HEAD', url)
-        if resp.status_code != 200:
-            raise FileDownException("HEAD request not allow")
-        return int(resp.headers['Content-Length'])
+        return int(resp.headers.get('Content-Length', 0))
 
-    def get_range_content(self, range_start, range_end, url=None):
-        range_header = {'Range': 'bytes={}-{}'.format(range_start, range_end)}
-        return self.do_request('GET', url, headers=range_header, stream=True)
+
+def worker(url, timeout, headers, cookies, proxies, filename, task_queue, progress_queue, chunk_size):
+    handler = RequestHandler(url, timeout, headers, cookies, proxies)
+    handler.handle(filename, task_queue, progress_queue, chunk_size)
 
 
 class DownloadProcess(object):
-    def __init__(self, url, thread_num, filename=None, headers=None,
-                 cookies=None, proxies=None):
+    def __init__(
+        self,
+        url,
+        thread=True,
+        thread_num=30,
+        chunk_size=1024 * 1024,
+        timeout=30,
+        filename=None,
+        headers=None,
+        cookies=None,
+        proxies=None,
+    ):
         self.url = url
+        self.thread = thread
         self.thread_num = thread_num
+        self.chunk_size = chunk_size
+        self.timeout = timeout
+        self.headers = headers
+        self.cookies = cookies
+        self.proxies = proxies
         self.filename = filename or self.parse_filename()
-        self.queue = Queue(thread_num * 2)
-        self.request_handler = RequestHandler(self.url, headers=headers,
-                                              cookies=cookies, proxies=proxies)
+        self.request_handler = RequestHandler(self.url, headers=headers, cookies=cookies, proxies=proxies)
         self.content_length = self.request_handler.get_content_length()
-        self.interval = ceil_div(self.content_length, self.thread_num)
-        self.progress = tqdm(total=self.content_length, unit='B',
-                             unit_scale=True, desc=self.filename)
 
     def parse_filename(self):
-        return urlparse(self.url).path.rsplit('/')[-1]
+        return os.path.basename(urlparse(self.url).path)
 
     def process(self):
-        sys.stdout.write("\033[2K\033[E")
-        sys.stdout.write('download process start. \n')
-        sys.stdout.write(
-            'length %d, filename %s \n' % (self.content_length, self.filename))
-
         if os.path.exists(self.filename) and os.path.getsize(self.filename) == self.content_length:
-            print(u"{} is exist".format(self.filename))
+            print(u"【{}】: is exist".format(self.filename))
         else:
             f = open(self.filename, 'wb')
             f.truncate(self.content_length)
             f.close()
 
-        t = threading.Thread(target=self.update_progress)
-        t.setDaemon(True)
-        t.start()
+        if self.thread:
+            worker_pool = ThreadPool(self.thread_num)
+            task_queue = Queue()
+            progress_queue = Queue()
+        else:
+            worker_pool = ProcessPool(self.thread_num)
+            task_queue = Manager().Queue()
+            progress_queue = Manager().Queue()
 
-        download_handlers = []
-        for i in range(self.thread_num):
-            start = i * self.interval
-            end = start + self.interval
-            download_handlers.append(
-                DownloadHandler(self.url, self.filename, self.queue, start,
-                                end, str(i), self.request_handler))
+        progress = tqdm(total=self.content_length, unit='B', unit_scale=True, desc=u'【{}】'.format(self.filename))
+        for start_index in range(0, self.content_length, self.chunk_size):
+            task_queue.put(start_index)
 
-        for d in download_handlers:
-            d.start()
-        for d in download_handlers:
-            d.join()
+        for thread in range(self.thread_num):
+            worker_pool.apply_async(
+                worker,
+                (
+                    self.url,
+                    self.timeout,
+                    self.headers,
+                    self.cookies,
+                    self.proxies,
+                    self.filename,
+                    task_queue,
+                    progress_queue,
+                    self.chunk_size,
+                ),
+            )
 
-        self.progress.close()
-        sys.stdout.write('download process end. \n')
+        while progress.total > progress.n:
+            progress.update(progress_queue.get())
 
-    def update_progress(self):
-        while 1:
-            self.progress.update(self.queue.get())
-
-
-class DownloadHandler(threading.Thread):
-    def __init__(self, url, filename, queue, start, end, name,
-                 request_handler):
-        super(DownloadHandler, self).__init__()
-        self.url = url
-        self.range_start = start
-        self.range_end = end
-        self.filename = filename
-        self.queue = queue
-        self.name = name
-        self.request_handler = request_handler
-        self.chunk_size = 1024 * 10
-        self.downloaded = 0
-
-    def process(self):
-        n = 3
-        process_count = 0
-        while n:
-            try:
-                with open(self.filename, 'rb+') as f:
-                    resp = self.request_handler.get_range_content(
-                        range_start=self.range_start, range_end=self.range_end)
-                    f.seek(self.range_start)
-                    for data in resp.iter_content(chunk_size=self.chunk_size):
-                        f.write(data)
-                        process_count += len(data)
-                break
-            except requests.ConnectionError as e:
-                sys.stdout.write('[%d]Thread-%s %r\n' % (4-n, self.name, e))
-                time.sleep(random.random())
-                n -= 1
-        self.queue.put(process_count)
-        self.downloaded += process_count
-
-    def run(self):
-        sys.stdout.write('Thread-%s start range %d-%d\n' % (
-            self.name, self.range_start, self.range_end))
-
-        try:
-            self.process()
-        except requests.ConnectionError as e:
-            sys.stdout.write('Thread-%s %r\n' % (self.name, e))
-            time.sleep(random.random())
-            self.process()
-
-        sys.stdout.write("Thread-%s end range %d-%d\n" % (
-            self.name, self.range_start, self.range_end))
+        worker_pool.close()
+        progress.close()
 
 
 @click.command()
-@click.option('-t', '--thread_num', default=8, help='Number of threads')
-@click.option('-f', '--filename', help='Filename of download')
-@click.option('-h', '--header', multiple=True, help='Headers to attach file')
-@click.option('-c', '--cookie', multiple=True, help='Cookie to attach file')
-@click.option('-p', '--proxy', multiple=True, help='Proxy to attach file')
 @click.argument('url')
-def main(url, thread_num, filename, cookie, header, proxy):
-    """
-
-    :param url:
-    :param thread_num:
-    :param filename:
-    :param cookie:
-    :param header:
-    :param proxy: pip install "requests[socks]" first
-    :return:
-    """
-    headers = dict([x.split('=') for x in header])
-    cookies = dict([x.split('=') for x in cookie])
-    proxies = dict([x.split('=') for x in proxy])
-    DownloadProcess(url, thread_num, filename, headers=headers,
-                    cookies=cookies, proxies=proxies).process()
+@click.option('--thread/--process', default=True, help='Use ThreadPool or ProcessPool')
+@click.option('-w', '--worker_num', default=30, help='Number of workers')
+@click.option('-s', '--chunk_size', default=1024 * 1024, help='Chunk size of each piece')
+@click.option('-c', '--timeout', default=30, help='Timeout for chunk download')
+@click.option('-f', '--filename', help='Filename of download')
+@click.option('-h', '--headers', multiple=True, help='Headers to get file')
+@click.option('-c', '--cookies', multiple=True, help='Cookie to get file')
+@click.option('-p', '--proxies', multiple=True, help='Proxy to get file, pip install "requests[socks]"')
+@click.help_option("-h", "--help")
+def main(url, thread, worker_num, chunk_size, timeout, filename, headers, cookies, proxies):
+    headers = dict([x.split('=') for x in headers])
+    cookies = dict([x.split('=') for x in cookies])
+    proxies = dict([x.split('=') for x in proxies])
+    DownloadProcess(url, thread, worker_num, chunk_size, timeout, filename, headers, cookies, proxies).process()
 
 
 if __name__ == '__main__':
-    """
-    两个问题
-    1. 异常捕获和处理，ConnectionError
-    2. 线程池用完后期下载速度乏力
-    """
     main()

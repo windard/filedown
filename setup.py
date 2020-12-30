@@ -2,12 +2,12 @@
 
 from setuptools import setup
 
-version = '0.4.2'
+version = '0.5.0'
 
 entry_points = {
     'console_scripts': [
         'filedown=filedown.filedown:main',
-        'only_download=filedown.only_download:main'
+        'concurrent_download=filedown.concurrent_download:main'
     ],
 }
 
@@ -23,7 +23,6 @@ setup(
         'Click',
         'tqdm',
         'requests',
-        'gevent',
     ],
     license="MIT",
     entry_points=entry_points,
